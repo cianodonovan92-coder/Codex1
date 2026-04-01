@@ -39,9 +39,9 @@ export default function AnalyticsPage() {
   return (
     <Shell>
       <TopNav />
-      <h1 className="mb-6 text-3xl font-semibold">Coach Analytics Dashboard</h1>
-      <div className="mb-4 grid gap-4 lg:grid-cols-3">
-        <GlassCard title="Player Profile">
+      <h1 className="mb-7 text-3xl font-semibold sm:text-4xl">Coach Analytics Dashboard</h1>
+      <div className="mb-5 grid gap-4 lg:grid-cols-3">
+        <GlassCard title="Player Profile" className="hero-glow">
           <p className="text-xl font-semibold">{playerProfile.name}</p>
           <p className="text-sm text-slate-300">
             {playerProfile.team} · {playerProfile.role}
@@ -60,18 +60,18 @@ export default function AnalyticsPage() {
         </GlassCard>
       </div>
 
-      <div className="mb-4 grid gap-4 lg:grid-cols-2">
+      <div className="mb-5 grid gap-4 lg:grid-cols-2">
         <GlassCard title="Reaction Time Trend">
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={historicalMetrics}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#263346" />
                 <XAxis dataKey="session" stroke="#94a3b8" />
                 <YAxis stroke="#94a3b8" />
-                <Tooltip />
+                <Tooltip contentStyle={{ background: "#0b1220", border: "1px solid #334155" }} />
                 <Legend />
-                <Line type="monotone" dataKey="reaction" stroke="#22d3ee" name="Reaction (s)" />
-                <Line type="monotone" dataKey="quality" stroke="#818cf8" name="Quality" />
+                <Line type="monotone" dataKey="reaction" stroke="#22d3ee" strokeWidth={2.4} dot={{ r: 3 }} name="Reaction (s)" />
+                <Line type="monotone" dataKey="quality" stroke="#818cf8" strokeWidth={2.4} dot={{ r: 3 }} name="Quality" />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -81,9 +81,9 @@ export default function AnalyticsPage() {
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <RadarChart data={radarData}>
-                <PolarGrid />
-                <PolarAngleAxis dataKey="subject" />
-                <Radar dataKey="value" stroke="#4FE3FF" fill="#4FE3FF" fillOpacity={0.45} />
+                <PolarGrid stroke="#334155" />
+                <PolarAngleAxis dataKey="subject" tick={{ fill: "#cbd5e1", fontSize: 12 }} />
+                <Radar dataKey="value" stroke="#4FE3FF" fill="#4FE3FF" fillOpacity={0.42} />
               </RadarChart>
             </ResponsiveContainer>
           </div>
@@ -95,11 +95,11 @@ export default function AnalyticsPage() {
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={expectedChosen}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#263346" />
                 <XAxis dataKey="metric" stroke="#94a3b8" />
                 <YAxis stroke="#94a3b8" />
-                <Tooltip />
-                <Bar dataKey="score" fill="#6B8CFF" />
+                <Tooltip contentStyle={{ background: "#0b1220", border: "1px solid #334155" }} />
+                <Bar dataKey="score" fill="#6B8CFF" radius={[8, 8, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -108,7 +108,7 @@ export default function AnalyticsPage() {
         <GlassCard title="Improvement Recommendations">
           <ul className="space-y-3 text-sm text-slate-200">
             {recommendations.map((item) => (
-              <li key={item} className="rounded-lg border border-white/10 bg-white/5 p-3">
+              <li key={item} className="rounded-lg border border-white/10 bg-white/5 p-3 transition hover:border-accent/40 hover:bg-white/[0.08]">
                 {item}
               </li>
             ))}
@@ -122,7 +122,7 @@ export default function AnalyticsPage() {
 function SummaryMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-white/10 bg-white/5 p-3">
-      <p className="text-xs uppercase text-slate-400">{label}</p>
+      <p className="text-xs uppercase tracking-[0.14em] text-slate-400">{label}</p>
       <p className="mt-1 text-xl font-semibold">{value}</p>
     </div>
   );
