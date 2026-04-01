@@ -98,7 +98,7 @@ export default function SimulationPage() {
               <p className="mt-1 text-sm text-slate-100">{getObjectiveCopy(scenario, recommendedAction)}</p>
             </div>
 
-            <SimulationScene />
+            <SimulationScene recommendedActionId={recommendedAction?.id} />
           </GlassCard>
 
           {!result ? (
