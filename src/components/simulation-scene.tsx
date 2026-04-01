@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
@@ -44,9 +44,15 @@ export function SimulationScene() {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const vrSessionRef = useRef<(() => Promise<void>) | null>(null);
   const vrExitRef = useRef<(() => Promise<void>) | null>(null);
+  const desktopToggleRef = useRef<(() => Promise<void>) | null>(null);
+
   const [xrSupport, setXrSupport] = useState<"checking" | "supported" | "unsupported">("checking");
   const [vrActive, setVrActive] = useState(false);
   const [vrError, setVrError] = useState<string | null>(null);
+
+  const [desktopMode, setDesktopMode] = useState(false);
+  const [desktopHint, setDesktopHint] = useState(false);
+  const [desktopError, setDesktopError] = useState<string | null>(null);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -74,6 +80,20 @@ export function SimulationScene() {
     controls.maxPolarAngle = 1.25;
     controls.target.set(0, 0.2, 0);
     controls.update();
+
+    const desktop = {
+      enabled: false,
+      yaw: 0,
+      pitch: -0.22,
+      position: new THREE.Vector3(0, 1.7, 6),
+      keys: {
+        forward: false,
+        backward: false,
+        left: false,
+        right: false,
+        boost: false
+      }
+    };
 
     const ambient = new THREE.AmbientLight(0xffffff, 0.35);
     scene.add(ambient);
@@ -126,28 +146,116 @@ export function SimulationScene() {
     const label = makeLabelSprite("Forward lane");
     if (label) scene.add(label.sprite);
 
+    const setDesktopEnabled = (enabled: boolean) => {
+      desktop.enabled = enabled;
+      controls.enabled = !enabled;
+      setDesktopMode(enabled);
+      if (enabled) {
+        setDesktopHint(true);
+      }
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!desktop.enabled) return;
+      const key = event.key.toLowerCase();
+      if (key === "w" || key === "arrowup") desktop.keys.forward = true;
+      if (key === "s" || key === "arrowdown") desktop.keys.backward = true;
+      if (key === "a" || key === "arrowleft") desktop.keys.left = true;
+      if (key === "d" || key === "arrowright") desktop.keys.right = true;
+      if (key === "shift") desktop.keys.boost = true;
+      if (key === "escape") setDesktopEnabled(false);
+    };
+
+    const onKeyUp = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (key === "w" || key === "arrowup") desktop.keys.forward = false;
+      if (key === "s" || key === "arrowdown") desktop.keys.backward = false;
+      if (key === "a" || key === "arrowleft") desktop.keys.left = false;
+      if (key === "d" || key === "arrowright") desktop.keys.right = false;
+      if (key === "shift") desktop.keys.boost = false;
+    };
+
+    const onMouseMove = (event: MouseEvent) => {
+      if (!desktop.enabled) return;
+      if (document.pointerLockElement !== renderer.domElement) return;
+      desktop.yaw -= event.movementX * 0.0026;
+      desktop.pitch -= event.movementY * 0.0022;
+      desktop.pitch = Math.max(-1.2, Math.min(0.75, desktop.pitch));
+    };
+
+    const onPointerLockChange = () => {
+      if (!desktop.enabled) return;
+      if (document.pointerLockElement !== renderer.domElement) {
+        setDesktopEnabled(false);
+      }
+    };
+
+    const onFullscreenChange = () => {
+      if (!desktop.enabled) return;
+      if (!document.fullscreenElement) {
+        setDesktopEnabled(false);
+      }
+    };
+
+    const updateDesktopCamera = (delta: number) => {
+      const speed = desktop.keys.boost ? 6.4 : 3.6;
+      const motion = new THREE.Vector3();
+
+      if (desktop.keys.forward) motion.z -= 1;
+      if (desktop.keys.backward) motion.z += 1;
+      if (desktop.keys.left) motion.x -= 1;
+      if (desktop.keys.right) motion.x += 1;
+
+      if (motion.lengthSq() > 0) {
+        motion.normalize().multiplyScalar(speed * delta);
+        const forward = new THREE.Vector3(Math.sin(desktop.yaw), 0, Math.cos(desktop.yaw));
+        const right = new THREE.Vector3(forward.z, 0, -forward.x);
+        desktop.position.addScaledVector(forward, -motion.z);
+        desktop.position.addScaledVector(right, motion.x);
+      }
+
+      desktop.position.x = THREE.MathUtils.clamp(desktop.position.x, -8, 8);
+      desktop.position.z = THREE.MathUtils.clamp(desktop.position.z, -8, 8);
+      desktop.position.y = 1.7;
+
+      camera.position.copy(desktop.position);
+      const look = new THREE.Vector3(
+        Math.sin(desktop.yaw) * Math.cos(desktop.pitch),
+        Math.sin(desktop.pitch),
+        Math.cos(desktop.yaw) * Math.cos(desktop.pitch)
+      );
+      camera.lookAt(camera.position.clone().add(look));
+    };
+
     const clock = new THREE.Clock();
+    let elapsed = 0;
+
     const animate = () => {
-      const t = clock.getElapsedTime();
+      const delta = clock.getDelta();
+      elapsed += delta;
 
       defenders.forEach(({ mesh, index }) => {
-        const phase = t * 0.85 + index;
+        const phase = elapsed * 0.85 + index;
         mesh.position.x = Math.sin(phase) * 1.55;
         mesh.position.z = -2 + Math.cos(phase) * 0.75;
         mesh.position.y = 0.2 + Math.sin(phase * 3) * 0.02;
       });
 
-      const scale = 1 + Math.sin(t * 6) * 0.045;
+      const scale = 1 + Math.sin(elapsed * 6) * 0.045;
       ball.scale.set(scale, scale, scale);
 
       if (!renderer.xr.isPresenting) {
-        const azimuth = Math.sin(t * 0.2) * 0.08;
-        const polar = 1.03 + Math.cos(t * 0.22) * 0.03;
-        const radius = 8.2;
-        camera.position.x = Math.sin(azimuth) * radius;
-        camera.position.z = Math.cos(azimuth) * radius;
-        camera.position.y = Math.cos(polar) * radius + 4.6;
-        camera.lookAt(controls.target);
+        if (desktop.enabled) {
+          updateDesktopCamera(delta);
+        } else {
+          const azimuth = Math.sin(elapsed * 0.2) * 0.08;
+          const polar = 1.03 + Math.cos(elapsed * 0.22) * 0.03;
+          const radius = 8.2;
+          camera.position.x = Math.sin(azimuth) * radius;
+          camera.position.z = Math.cos(azimuth) * radius;
+          camera.position.y = Math.cos(polar) * radius + 4.6;
+          camera.lookAt(controls.target);
+        }
       }
 
       renderer.render(scene, camera);
@@ -201,6 +309,34 @@ export function SimulationScene() {
       if (activeSession) await activeSession.end();
     };
 
+    desktopToggleRef.current = async () => {
+      if (desktop.enabled) {
+        setDesktopEnabled(false);
+        if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+        if (document.fullscreenElement) await document.exitFullscreen();
+        return;
+      }
+
+      try {
+        setDesktopError(null);
+        setDesktopEnabled(true);
+        desktop.position.set(0, 1.7, 6);
+        desktop.yaw = 0;
+        desktop.pitch = -0.22;
+
+        if (mount.requestFullscreen) {
+          await mount.requestFullscreen();
+        }
+
+        if (renderer.domElement.requestPointerLock) {
+          renderer.domElement.requestPointerLock();
+        }
+      } catch {
+        setDesktopEnabled(false);
+        setDesktopError("Could not start presentation mode. Browser blocked fullscreen or pointer lock.");
+      }
+    };
+
     const onSessionStart = () => setVrActive(true);
     const onSessionEnd = () => setVrActive(false);
     renderer.xr.addEventListener("sessionstart", onSessionStart);
@@ -216,6 +352,12 @@ export function SimulationScene() {
     const resizeObserver = new ResizeObserver(onResize);
     resizeObserver.observe(mount);
 
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keyup", onKeyUp);
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("pointerlockchange", onPointerLockChange);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+
     return () => {
       disposed = true;
       renderer.xr.removeEventListener("sessionstart", onSessionStart);
@@ -225,7 +367,15 @@ export function SimulationScene() {
       controls.dispose();
       vrSessionRef.current = null;
       vrExitRef.current = null;
+      desktopToggleRef.current = null;
       setVrActive(false);
+      setDesktopMode(false);
+
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keyup", onKeyUp);
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("pointerlockchange", onPointerLockChange);
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
 
       defenders.forEach(({ mesh }) => {
         (mesh.geometry as THREE.BufferGeometry).dispose();
@@ -259,6 +409,16 @@ export function SimulationScene() {
     <div className="relative h-[390px] w-full overflow-hidden rounded-2xl border border-white/15 bg-gradient-to-br from-slate-950 to-slate-900">
       <div ref={mountRef} className="h-full w-full" />
       <div className="pointer-events-none absolute right-3 top-3 flex flex-col items-end gap-2">
+        <button
+          onClick={() => {
+            const run = desktopToggleRef.current;
+            if (run) void run();
+          }}
+          className="pointer-events-auto rounded-full border border-indigo-300/30 bg-indigo-300/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-indigo-100 transition hover:border-indigo-200 hover:bg-indigo-300/20"
+        >
+          {desktopMode ? "Exit Preview" : "Presentation Mode"}
+        </button>
+
         {xrSupport === "supported" ? (
           <button
             onClick={() => {
@@ -275,8 +435,20 @@ export function SimulationScene() {
           </span>
         ) : null}
 
+        {desktopMode || desktopHint ? (
+          <span className="max-w-[270px] rounded-lg border border-indigo-300/25 bg-indigo-300/10 px-2.5 py-1.5 text-[11px] leading-snug text-indigo-100">
+            Desktop immersive preview: move mouse to look, use WASD (Shift to sprint), press Esc to exit.
+          </span>
+        ) : null}
+
+        {desktopError ? (
+          <span className="max-w-[270px] rounded-lg border border-amber-300/25 bg-amber-300/10 px-2.5 py-1.5 text-[11px] leading-snug text-amber-100">
+            {desktopError}
+          </span>
+        ) : null}
+
         {vrError ? (
-          <span className="max-w-[230px] rounded-lg border border-amber-300/25 bg-amber-300/10 px-2.5 py-1.5 text-[11px] leading-snug text-amber-100">
+          <span className="max-w-[270px] rounded-lg border border-amber-300/25 bg-amber-300/10 px-2.5 py-1.5 text-[11px] leading-snug text-amber-100">
             {vrError}
           </span>
         ) : null}
