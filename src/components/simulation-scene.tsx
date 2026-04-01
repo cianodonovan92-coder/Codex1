@@ -1,90 +1,286 @@
 "use client";
 
-import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, Line, Text } from "@react-three/drei";
-import { useMemo, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-function Defender({ index }: { index: number }) {
-  const ref = useRef<THREE.Mesh>(null);
-  useFrame(({ clock }) => {
-    if (!ref.current) return;
-    const t = clock.getElapsedTime() * 0.85 + index;
-    ref.current.position.x = Math.sin(t) * 1.55;
-    ref.current.position.z = -2 + Math.cos(t) * 0.75;
-    ref.current.position.y = 0.2 + Math.sin(t * 3) * 0.02;
-  });
+function makeLabelSprite(text: string) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
 
-  return (
-    <mesh ref={ref} position={[index - 1, 0.2, -2]}>
-      <boxGeometry args={[0.4, 0.4, 0.4]} />
-      <meshStandardMaterial color="#fb7185" emissive="#fb7185" emissiveIntensity={0.35} roughness={0.2} />
-    </mesh>
-  );
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.font = "700 52px Arial";
+  ctx.fillStyle = "#7dd3fc";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(2.8, 0.7, 1);
+  sprite.position.set(0, 0.2, 4.6);
+
+  return { sprite, texture, material };
 }
 
-function BallPulse() {
-  const ref = useRef<THREE.Mesh>(null);
-  useFrame(({ clock }) => {
-    if (!ref.current) return;
-    const scale = 1 + Math.sin(clock.getElapsedTime() * 6) * 0.045;
-    ref.current.scale.set(scale, scale, scale);
+function makeDashedLane(start: THREE.Vector3, end: THREE.Vector3, color: string) {
+  const geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
+  const material = new THREE.LineDashedMaterial({
+    color,
+    dashSize: 0.35,
+    gapSize: 0.22
   });
-
-  return (
-    <mesh ref={ref} position={[0, 0.15, 0]}>
-      <sphereGeometry args={[0.15, 24, 24]} />
-      <meshStandardMaterial color="#e2e8f0" emissive="#67e8f9" emissiveIntensity={0.3} metalness={0.25} />
-    </mesh>
-  );
-}
-
-function Lane({ start, end, color }: { start: [number, number, number]; end: [number, number, number]; color: string }) {
-  const points = useMemo(() => [new THREE.Vector3(...start), new THREE.Vector3(...end)], [start, end]);
-  return <Line points={points} color={color} lineWidth={2.2} dashed dashScale={8} />;
-}
-
-function TacticalCamera() {
-  const controls = useRef<any>(null);
-  useFrame(({ clock }) => {
-    if (!controls.current) return;
-    const t = clock.getElapsedTime();
-    controls.current.setAzimuthalAngle(Math.sin(t * 0.2) * 0.08);
-    controls.current.setPolarAngle(1.03 + Math.cos(t * 0.22) * 0.03);
-  });
-
-  return <OrbitControls ref={controls} enableZoom={false} enablePan={false} minPolarAngle={0.8} maxPolarAngle={1.25} />;
+  const line = new THREE.Line(geometry, material);
+  line.computeLineDistances();
+  return { line, geometry, material };
 }
 
 export function SimulationScene() {
+  const mountRef = useRef<HTMLDivElement | null>(null);
+  const vrSessionRef = useRef<(() => Promise<void>) | null>(null);
+  const vrExitRef = useRef<(() => Promise<void>) | null>(null);
+  const [xrSupport, setXrSupport] = useState<"checking" | "supported" | "unsupported">("checking");
+  const [vrActive, setVrActive] = useState(false);
+  const [vrError, setVrError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+    let disposed = false;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog("#070b15", 7, 18);
+
+    const camera = new THREE.PerspectiveCamera(49, mount.clientWidth / mount.clientHeight, 0.1, 60);
+    camera.position.set(0, 4.2, 8.2);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(mount.clientWidth, mount.clientHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.setClearColor("#070b15", 1);
+    renderer.xr.enabled = true;
+    mount.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableZoom = false;
+    controls.enablePan = false;
+    controls.minPolarAngle = 0.8;
+    controls.maxPolarAngle = 1.25;
+    controls.target.set(0, 0.2, 0);
+    controls.update();
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.35);
+    scene.add(ambient);
+
+    const directional = new THREE.DirectionalLight("#8ab4ff", 1.25);
+    directional.position.set(4, 8, 2);
+    scene.add(directional);
+
+    const spot = new THREE.SpotLight("#4FE3FF", 0.8, 0, 0.35, 0, 1);
+    spot.position.set(-2, 5, 4);
+    scene.add(spot);
+
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(20, 14),
+      new THREE.MeshStandardMaterial({ color: "#0a1418", roughness: 0.9, metalness: 0.15 })
+    );
+    plane.rotation.x = -Math.PI / 2;
+    scene.add(plane);
+
+    const ball = new THREE.Mesh(
+      new THREE.SphereGeometry(0.15, 24, 24),
+      new THREE.MeshStandardMaterial({ color: "#e2e8f0", emissive: "#67e8f9", emissiveIntensity: 0.3, metalness: 0.25 })
+    );
+    ball.position.set(0, 0.15, 0);
+    scene.add(ball);
+
+    const defenders = [0, 1, 2].map((index) => {
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.4, 0.4, 0.4),
+        new THREE.MeshStandardMaterial({ color: "#fb7185", emissive: "#fb7185", emissiveIntensity: 0.35, roughness: 0.2 })
+      );
+      mesh.position.set(index - 1, 0.2, -2);
+      scene.add(mesh);
+      return { mesh, index };
+    });
+
+    const laneDefs = [
+      { end: new THREE.Vector3(-3, 0.16, 2), color: "#4ade80" },
+      { end: new THREE.Vector3(0.3, 0.16, 4), color: "#22d3ee" },
+      { end: new THREE.Vector3(1.1, 0.16, -1.5), color: "#f59e0b" },
+      { end: new THREE.Vector3(4, 0.16, 1), color: "#a78bfa" }
+    ];
+
+    const laneResources = laneDefs.map(({ end, color }) => {
+      const lane = makeDashedLane(new THREE.Vector3(0, 0.16, 0), end, color);
+      scene.add(lane.line);
+      return lane;
+    });
+
+    const label = makeLabelSprite("Forward lane");
+    if (label) scene.add(label.sprite);
+
+    const clock = new THREE.Clock();
+    const animate = () => {
+      const t = clock.getElapsedTime();
+
+      defenders.forEach(({ mesh, index }) => {
+        const phase = t * 0.85 + index;
+        mesh.position.x = Math.sin(phase) * 1.55;
+        mesh.position.z = -2 + Math.cos(phase) * 0.75;
+        mesh.position.y = 0.2 + Math.sin(phase * 3) * 0.02;
+      });
+
+      const scale = 1 + Math.sin(t * 6) * 0.045;
+      ball.scale.set(scale, scale, scale);
+
+      if (!renderer.xr.isPresenting) {
+        const azimuth = Math.sin(t * 0.2) * 0.08;
+        const polar = 1.03 + Math.cos(t * 0.22) * 0.03;
+        const radius = 8.2;
+        camera.position.x = Math.sin(azimuth) * radius;
+        camera.position.z = Math.cos(azimuth) * radius;
+        camera.position.y = Math.cos(polar) * radius + 4.6;
+        camera.lookAt(controls.target);
+      }
+
+      renderer.render(scene, camera);
+    };
+
+    renderer.setAnimationLoop(animate);
+
+    const xrNavigator = navigator as Navigator & {
+      xr?: {
+        isSessionSupported: (mode: string) => Promise<boolean>;
+        requestSession: (
+          mode: string,
+          options?: { optionalFeatures?: string[]; requiredFeatures?: string[] }
+        ) => Promise<unknown>;
+      };
+    };
+
+    if (!xrNavigator.xr) {
+      setXrSupport("unsupported");
+    } else {
+      xrNavigator.xr
+        .isSessionSupported("immersive-vr")
+        .then((supported) => {
+          if (!disposed) setXrSupport(supported ? "supported" : "unsupported");
+        })
+        .catch(() => {
+          if (!disposed) setXrSupport("unsupported");
+        });
+    }
+
+    vrSessionRef.current = async () => {
+      if (!xrNavigator.xr) {
+        setVrError("WebXR is unavailable in this browser.");
+        return;
+      }
+
+      try {
+        setVrError(null);
+        const session = await xrNavigator.xr.requestSession("immersive-vr", {
+          optionalFeatures: ["local-floor", "bounded-floor", "hand-tracking"]
+        });
+
+        await (renderer.xr as { setSession: (nextSession: unknown) => Promise<void> }).setSession(session);
+      } catch {
+        setVrError("Could not start VR session. Use HTTPS or a headset-enabled browser (for example, Quest Browser).");
+      }
+    };
+
+    vrExitRef.current = async () => {
+      const activeSession = (renderer.xr as { getSession: () => { end: () => Promise<void> } | null }).getSession();
+      if (activeSession) await activeSession.end();
+    };
+
+    const onSessionStart = () => setVrActive(true);
+    const onSessionEnd = () => setVrActive(false);
+    renderer.xr.addEventListener("sessionstart", onSessionStart);
+    renderer.xr.addEventListener("sessionend", onSessionEnd);
+
+    const onResize = () => {
+      if (!mount.clientWidth || !mount.clientHeight) return;
+      camera.aspect = mount.clientWidth / mount.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(mount.clientWidth, mount.clientHeight);
+    };
+
+    const resizeObserver = new ResizeObserver(onResize);
+    resizeObserver.observe(mount);
+
+    return () => {
+      disposed = true;
+      renderer.xr.removeEventListener("sessionstart", onSessionStart);
+      renderer.xr.removeEventListener("sessionend", onSessionEnd);
+      renderer.setAnimationLoop(null);
+      resizeObserver.disconnect();
+      controls.dispose();
+      vrSessionRef.current = null;
+      vrExitRef.current = null;
+      setVrActive(false);
+
+      defenders.forEach(({ mesh }) => {
+        (mesh.geometry as THREE.BufferGeometry).dispose();
+        (mesh.material as THREE.Material).dispose();
+        scene.remove(mesh);
+      });
+
+      laneResources.forEach(({ line, geometry, material }) => {
+        geometry.dispose();
+        material.dispose();
+        scene.remove(line);
+      });
+
+      if (label) {
+        label.texture.dispose();
+        label.material.dispose();
+        scene.remove(label.sprite);
+      }
+
+      (ball.geometry as THREE.BufferGeometry).dispose();
+      (ball.material as THREE.Material).dispose();
+      (plane.geometry as THREE.BufferGeometry).dispose();
+      (plane.material as THREE.Material).dispose();
+
+      renderer.dispose();
+      mount.removeChild(renderer.domElement);
+    };
+  }, []);
+
   return (
-    <div className="h-[390px] w-full overflow-hidden rounded-2xl border border-white/15 bg-gradient-to-br from-slate-950 to-slate-900">
-      <Canvas camera={{ position: [0, 4.2, 8.2], fov: 49 }}>
-        <fog attach="fog" args={["#070b15", 7, 18]} />
-        <ambientLight intensity={0.35} />
-        <directionalLight position={[4, 8, 2]} intensity={1.25} color="#8ab4ff" />
-        <spotLight position={[-2, 5, 4]} intensity={0.8} angle={0.35} color="#4FE3FF" penumbra={1} />
-        <mesh rotation={[-Math.PI / 2, 0, 0]}>
-          <planeGeometry args={[20, 14]} />
-          <meshStandardMaterial color="#0a1418" roughness={0.9} metalness={0.15} />
-        </mesh>
+    <div className="relative h-[390px] w-full overflow-hidden rounded-2xl border border-white/15 bg-gradient-to-br from-slate-950 to-slate-900">
+      <div ref={mountRef} className="h-full w-full" />
+      <div className="pointer-events-none absolute right-3 top-3 flex flex-col items-end gap-2">
+        {xrSupport === "supported" ? (
+          <button
+            onClick={() => {
+              const run = vrActive ? vrExitRef.current : vrSessionRef.current;
+              if (run) void run();
+            }}
+            className="pointer-events-auto rounded-full border border-cyan-300/35 bg-cyan-300/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/20"
+          >
+            {vrActive ? "Exit VR" : "Enter VR"}
+          </button>
+        ) : xrSupport === "unsupported" ? (
+          <span className="rounded-full border border-white/15 bg-slate-900/70 px-3 py-1.5 text-[11px] uppercase tracking-[0.12em] text-slate-300">
+            VR unavailable
+          </span>
+        ) : null}
 
-        <BallPulse />
-
-        <Defender index={0} />
-        <Defender index={1} />
-        <Defender index={2} />
-
-        <Lane start={[0, 0.16, 0]} end={[-3, 0.16, 2]} color="#4ade80" />
-        <Lane start={[0, 0.16, 0]} end={[0.3, 0.16, 4]} color="#22d3ee" />
-        <Lane start={[0, 0.16, 0]} end={[1.1, 0.16, -1.5]} color="#f59e0b" />
-        <Lane start={[0, 0.16, 0]} end={[4, 0.16, 1]} color="#a78bfa" />
-
-        <Text position={[0, 0.2, 4.6]} fontSize={0.35} color="#7dd3fc">
-          Forward lane
-        </Text>
-        <TacticalCamera />
-      </Canvas>
+        {vrError ? (
+          <span className="max-w-[230px] rounded-lg border border-amber-300/25 bg-amber-300/10 px-2.5 py-1.5 text-[11px] leading-snug text-amber-100">
+            {vrError}
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
